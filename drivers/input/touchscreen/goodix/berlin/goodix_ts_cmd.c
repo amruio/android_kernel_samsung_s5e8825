@@ -1741,6 +1741,8 @@ static int ear_detect_enable_save(void *device_data)
 {
 	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
 	struct goodix_ts_data *ts = container_of(sec, struct goodix_ts_data, sec);
+        struct goodix_ts_cmd temp_cmd;  
+        int ret;                        
 
 	if (!ts->plat_data->support_ear_detect) {
 		sec->cmd_state = SEC_CMD_STATUS_NOT_APPLICABLE;
@@ -1757,6 +1759,21 @@ static int ear_detect_enable_save(void *device_data)
 	if (sec->cmd_param[0] == 1)
 		sec->cmd_param[0] = 3;
 
+        /* Before enabling ear_detect, disable game_mode if enabling ear_detect */
+	if (sec->cmd_param[0] == 1 || sec->cmd_param[0] == 3) {
+		ts_info("Disabling game mode before enabling ear detect");
+
+		temp_cmd.len = 5;
+		temp_cmd.cmd = 0xC2;       // Same command as game_mode
+		temp_cmd.data[0] = 0;      // 0 = disable game mode
+
+		ret = ts->hw_ops->send_cmd(ts, &temp_cmd);
+		if (ret < 0)
+			ts_err("Failed to disable game mode before enabling ear_detect");
+		else
+			ts_info("Game mode disabled successfully before ear_detect");
+	}
+
 	ts->plat_data->ed_enable = sec->cmd_param[0];
 	ts_info("ear detect mode(%d)", ts->plat_data->ed_enable);
 
@@ -1768,6 +1785,7 @@ static void ear_detect_enable(void *device_data)
 {
 	struct sec_cmd_data *sec = (struct sec_cmd_data *)device_data;
 	struct goodix_ts_data *ts = container_of(sec, struct goodix_ts_data, sec);
+        struct goodix_ts_cmd temp_cmd;
 	int ret;
 
 	if (ear_detect_enable_save(device_data) < 0)
@@ -1781,8 +1799,24 @@ static void ear_detect_enable(void *device_data)
 	}
 
 	ts_info("send ear detect cmd done");
-}
 
+       // After disabling ear_detect, enable game mode (if mode was 0)
+	if (ts->plat_data->ed_enable == 0) {
+		ts_info("ear_detect_mode=0 → Enabling game mode (after ed_disable)");
+
+		temp_cmd.len = 5;
+		temp_cmd.cmd = 0xC2;
+		temp_cmd.data[0] = 1; // Enable game mode
+
+		ret = ts->hw_ops->send_cmd(ts, &temp_cmd);
+		if (ret < 0) {
+			ts_err("Failed to enable game mode after disabling ear_detect");
+			sec->cmd_state = SEC_CMD_STATUS_FAIL;
+		} else {
+			ts_info("Game mode enabled successfully after disabling ear_detect");
+		}
+        }
+}
 /* 0: exit LSM  1: enter LSM  2: debug  3: debug */
 static int low_sensitivity_mode_enable_save(void *device_data)
 {
